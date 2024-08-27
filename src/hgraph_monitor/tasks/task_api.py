@@ -29,7 +29,7 @@ class TaskRequest(CompoundScalar):
 @compute_node(overloads=to_json)
 def to_json_task_request(ts: TS[TaskRequest]) -> TS[str]:
     ts = ts.value
-    return f'{{ "task_name": "{ts.id_}", "context": "{ts.context}" }}'
+    return f'{{ "task_name": "{ts.task_name}", "context": "{ts.context}" }}'
 
 
 @compute_node(overloads=from_json)
