@@ -1,15 +1,15 @@
 import argparse
 from datetime import datetime
 
-from hgraph import graph, register_adaptor, GraphConfiguration, EvaluationMode, evaluate_graph
-from hgraph.adaptors.tornado.http_server_adaptor import http_server_adaptor_impl
+from hgraph import graph, register_adaptor, GraphConfiguration, EvaluationMode, evaluate_graph, default_path
+from hgraph.adaptors.tornado.http_server_adaptor import http_server_adaptor_helper
 
 from hgraph_monitor.tasks.task_plugin import register_task_plugin
 
 
 @graph
 def monitor_app(port: int = 8080):
-    register_adaptor("http_server_adaptor", http_server_adaptor_impl, port=port)
+    register_adaptor(default_path, http_server_adaptor_helper, port=port)
     register_task_plugin()
 
 

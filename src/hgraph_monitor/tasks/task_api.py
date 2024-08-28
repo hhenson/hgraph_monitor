@@ -2,8 +2,9 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 
-from hgraph import TS, combine, TSD, TSB, TimeSeriesSchema, format_, CompoundScalar, compute_node, to_json, from_json
-from hgraph.adaptors.tornado.http_server_adaptor import HttpRequest, HttpResponse, http_server_handler
+from hgraph import TS, combine, TSD, TSB, TimeSeriesSchema, format_, CompoundScalar, compute_node, to_json, from_json, \
+    convert
+from hgraph.adaptors.tornado.http_server_adaptor import HttpRequest, HttpResponse, http_server_handler, HttpPostRequest
 
 
 class TaskStatusEnum(Enum):
@@ -39,7 +40,11 @@ def from_json_task_request(ts: TS[str]) -> TS[TaskRequest]:
     return TaskRequest(**d)
 
 
-@http_server_handler(url="/tasks/start")
+@http_server_handler(url="/task/start")
 def task_starting(request: TS[HttpRequest], states: TSD[str, TSB[TaskStatus]]) -> TS[HttpResponse]:
-    return combine[TS[HttpResponse]](status_code=200, body=format_("Started: {}", states))
-
+    request = convert[TS[HttpPostRequest]](request)
+    request = from_json[TS[TaskRequest]](request.body)
+    return combine[TS[HttpResponse]](
+        status_code=200,
+        body=format_('{{ "task_name": "{}",  "started": True }}', request.task_name)
+    )
