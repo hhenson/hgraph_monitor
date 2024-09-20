@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 from enum import IntEnum
 
-from hgraph import CompoundScalar, subscription_service, TS, service_impl, TSD, request_reply_service, \
-    get_service_inputs, replay_const, map_, feedback, merge, pass_through, graph, TimeSeriesSchema, TSB, compute_node, \
-    rekey, reference_service, set_service_output, REMOVE, record
-
-from hgraph_monitor.configuration.crud import CrudOperation, CrudEvent
+from hgraph import CompoundScalar, TS, service_impl, TSD, request_reply_service, \
+    get_service_inputs, replay_const, TimeSeriesSchema, TSB, compute_node, \
+    reference_service, set_service_output, REMOVE, record, default_path, debug_print
+from hgraph.adaptors.tornado._rest_handler import RestRequest, RestResponse, rest_handler, RestCreateRequest, \
+    RestCreateResponse, RestResultEnum, RestDeleteRequest, RestUpdateRequest, RestUpdateResponse, RestDeleteResponse, \
+    RestReadRequest, RestReadResponse, RestListRequest, RestListResponse
 
 
 class Level(IntEnum):
@@ -24,70 +25,132 @@ class ItemDescription(CompoundScalar):
     notification_trigger_level: Level = None
 
 
-@dataclass
-class ItemDescriptionCrud(CrudEvent):
-    item_description: ItemDescription = None
-
-
 @reference_service
-def item_description(path: str) -> TSD[str, TS[ItemDescription]]:
+def item_descriptions(path: str = default_path) -> TSD[str, TS[ItemDescription]]:
     """
     Subscribe to the item description
     """
 
 
 @request_reply_service
-def crud_item_description(path: str, event: TS[ItemDescriptionCrud]) -> TS[bool]:
-    """Create or update the item descriptions"""
+def item_create_update(path: str, item: TS[ItemDescription]) -> TS[str]:
+    ...
 
 
-@service_impl(interfaces=(item_description, crud_item_description))
+@request_reply_service
+def item_delete(path: str, item_id: TS[str]) -> TS[str]:
+    ...
+
+
+@service_impl(interfaces=(item_descriptions, item_create_update, item_delete))
 def item_description_impl(path: str):
     """Implements the item description service"""
-    initial_state = replay_const[TSD[str, TS[ItemDescription]]]("items", "MonitorAPI")
-    out = _apply_crud_op(get_service_inputs(path, crud_item_description).event, initial_state)
-    set_service_output(path, item_description, out.items)
-    set_service_output(path, crud_item_description, out.results)
-    record(out.items, "items", "MonitorAPI")
+    initial_state = replay_const("items", TSD[str, TS[ItemDescription]], recordable_id="MonitorAPI")
+    out = _apply_crud_op(
+        create_update_item=get_service_inputs(path, item_create_update).item,
+        remove_item_id=get_service_inputs(path, item_delete).item_id,
+        initial_state=initial_state
+    )
+    debug_print("ItemDescription", out)
+    set_service_output(path, item_descriptions, out.items)
+    set_service_output(path, item_create_update, out.create_results)
+    set_service_output(path, item_delete, out.remove_results)
+    record(out.items, "items", recordable_id="MonitorAPI")
 
 
-class ItemDescriptionCrudResult(TimeSeriesSchema):
-    results: TSD[int, TS[bool]]
+class _ItemDescriptionCrudResult(TimeSeriesSchema):
+    response: TSD[int, TS[RestResponse[ItemDescription]]]
+    create_results: TSD[int, TS[str]]
+    remove_results: TSD[int, TS[str]]
     items: TSD[str, TS[ItemDescription]]
 
 
-@compute_node(active=("event",))
-def _apply_crud_op(events: TSD[int, TS[ItemDescriptionCrud]],
-                   _out: TSB[ItemDescriptionCrudResult] = None) -> TSB[ItemDescriptionCrudResult]:
-    results = {}
-    items_updates= {}
-    items = _out.items
-    for i, event in events.modified_items():
-        event: ItemDescriptionCrud = event.value
-        match event.operation:
-            case CrudOperation.CREATE:
-                if event.id in items:
-                    results[i] = False
-                else:
-                    results[i] = True
-                    items_updates[event.id] = event.item_description
-            case CrudOperation.UPDATE:
-                if event.id in items:
-                    results[i] = True
-                    kwargs = items[event.id].value.to_dict() | event.item_description.to_dict()
-                    items_updates[event.id] = ItemDescription(**kwargs)
-                else:
-                    results[i] = False
-            case CrudOperation.DELETE:
-                if event.id in items:
-                    results[i] = True
-                    items_updates[event.id] = REMOVE
-                else:
-                    results[i] = False
+@rest_handler(url="/config/item_description", data_type=ItemDescription)
+@compute_node(valid=tuple())
+def _apply_crud_op(
+        request: TSD[int, TS[RestRequest[ItemDescription]]],
+        create_update_item: TSD[int, TS[ItemDescription]],
+        remove_item_id: TSD[int, TS[str]],
+        initial_state: TSD[str, TS[ItemDescription]],
+        _output: TSB[_ItemDescriptionCrudResult] = None
+) -> TSB[_ItemDescriptionCrudResult]:
+    responses = {}
+    create_update_results = {}
+    remove_item_results = {}
+    items_updates = {}
+    if initial_state.modified:
+        # This will potentially tick once when the graph starts with the last recorded state.
+        # So we initialise our output with this state.
+        items_updates = dict(initial_state.value)
+    items: TSD[str, TS[ItemDescription]] = _output.value.items_ if _output.valid else {}
+    for i, item_ts in create_update_item.modified_items():
+        item: ItemDescription = item_ts.value
+        if item.name in items:
+            kwargs = items[item.name].value.to_dict() | item.to_dict()
+            items_updates[item.name] = ItemDescription(**kwargs)
+            create_update_results[i] = "Updated"
+        else:
+            items_updates[item.name] = item
+            create_update_results[i] = "Created"
 
-    for i in events.removed_keys():
-        results[i] = REMOVE
+    for i, item_id_ts in remove_item_id.modified_items():
+        item_id: str = item_id_ts.value
+        if item_id in items:
+            if item_id in items:
+                items_updates[item_id] = REMOVE
+                remove_item_results[i] = "Removed"
+            else:
+                create_update_results[i] = "Not found"
 
-    return {'results': results, 'items': items_updates}
+    for i, request_ts in request.modified_items():
+        request: RestRequest[ItemDescription] = request_ts.value
+        if isinstance(request, RestCreateRequest):
+            id, item = _validate_id(request)
+            if id not in items:
+                items_updates[id] = item
+                responses[i] = RestCreateResponse[RestResponse[ItemDescription]](status=RestResultEnum.CREATED,
+                                                                                 value=item)
+            else:
+                responses[i] = RestCreateResponse[RestResponse[ItemDescription]](status=RestResultEnum.CONFLICT,
+                                                                                 value=item)
+        elif isinstance(request, RestUpdateRequest):
+            id, item = _validate_id(request)
+            if id not in items:
+                responses[i] = RestUpdateResponse[RestResponse[ItemDescription]](status=RestResultEnum.NOT_FOUND,
+                                                                                 value=item)
+            else:
+                kwargs = items[id].value.to_dict() | item.to_dict()
+                items_updates[id] = ItemDescription(**kwargs)
+                responses[i] = RestUpdateResponse[RestResponse[ItemDescription]](status=RestResultEnum.OK, value=item)
+        elif isinstance(request, RestDeleteRequest):
+            id = request.id
+            if id in items:
+                items_updates[id] = REMOVE
+                responses[i] = RestDeleteResponse[RestResponse[ItemDescription]](status=RestResultEnum.OK)
+            else:
+                responses[i] = RestDeleteResponse[RestResponse[ItemDescription]](status=RestResultEnum.NOT_FOUND)
+        elif isinstance(request, RestReadRequest):
+            id = request.id
+            if id in items:
+                responses[i] = RestReadResponse[RestResponse[ItemDescription]](status=RestResultEnum.OK,
+                                                                               value=items[id])
+            else:
+                responses[i] = RestReadResponse[RestResponse[ItemDescription]](status=RestResultEnum.NOT_FOUND)
+        elif isinstance(request, RestListRequest):
+            responses[i] = RestListResponse[RestResponse[ItemDescription]](status=RestResultEnum.OK,
+                                                                           ids=tuple(items.keys()))
+
+    for i in create_update_item.removed_keys():
+        create_update_results[i] = REMOVE
+    for i in remove_item_id.removed_keys():
+        remove_item_results[i] = REMOVE
+
+    return {'response': responses, 'create_results': create_update_results, 'remove_results': remove_item_results,
+            'items': items_updates}
 
 
+def _validate_id(request):
+    id = request.id
+    item = request.value
+    assert id == item.name, f"Item id '{id}' does not match item name '{item.name}'"
+    return id, item
