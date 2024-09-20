@@ -25,7 +25,7 @@ packages = [
 
 [tool.poetry.dependencies]
     python = ">=3.11"
-    hgraph = { version = ">=0.3.9", extras = ["web"]}
+    hgraph = { version = ">=0.3.18", extras = ["web"]}
 
 [tool.poetry.urls]
 Homepage = "https://github.com/hhenson/hgraph_monitor"
