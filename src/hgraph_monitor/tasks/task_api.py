@@ -27,19 +27,6 @@ class TaskRequest(CompoundScalar):
     context: str = ""
 
 
-@compute_node(overloads=to_json)
-def to_json_task_request(ts: TS[TaskRequest]) -> TS[str]:
-    ts = ts.value
-    return f'{{ "task_name": "{ts.task_name}", "context": "{ts.context}" }}'
-
-
-@compute_node(overloads=from_json)
-def from_json_task_request(ts: TS[str]) -> TS[TaskRequest]:
-    ts = ts.value
-    d = json.loads(ts)
-    return TaskRequest(**d)
-
-
 @dataclass(frozen=True)
 class TaskStatusEvent(CompoundScalar):
     task_name: str
